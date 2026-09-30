@@ -1,0 +1,166 @@
+﻿services:
+  postgres:
+    container_name: quorumvault-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: quorumvault
+      POSTGRES_PASSWORD: quorumvault
+      POSTGRES_DB: quorumvault
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quorumvault -d quorumvault"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    container_name: quorumvault-redis
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+
+  storage-node-1: &storage-node
+    container_name: quorumvault-storage-node-1
+    build: ./storage-node
+    environment:
+      NODE_ID: node-1
+      PORT: 9001
+      DATA_DIR: /data
+      DEMO_MODE: ${DEMO_MODE:-true}
+      QUORUMVAULT_INTERNAL_TOKEN: ${QUORUMVAULT_INTERNAL_TOKEN:-local-demo-internal-token-change-me}
+    volumes:
+      - node1-data:/data
+    ports:
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9001/internal/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  storage-node-2:
+    <<: *storage-node
+    container_name: quorumvault-storage-node-2
+    environment:
+      NODE_ID: node-2
+      PORT: 9002
+      DATA_DIR: /data
+      DEMO_MODE: ${DEMO_MODE:-true}
+      QUORUMVAULT_INTERNAL_TOKEN: ${QUORUMVAULT_INTERNAL_TOKEN:-local-demo-internal-token-change-me}
+    volumes:
+      - node2-data:/data
+    ports:
+      - "9002:9002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9002/internal/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  storage-node-3:
+    <<: *storage-node
+    container_name: quorumvault-storage-node-3
+    environment:
+      NODE_ID: node-3
+      PORT: 9003
+      DATA_DIR: /data
+      DEMO_MODE: ${DEMO_MODE:-true}
+      QUORUMVAULT_INTERNAL_TOKEN: ${QUORUMVAULT_INTERNAL_TOKEN:-local-demo-internal-token-change-me}
+    volumes:
+      - node3-data:/data
+    ports:
+      - "9003:9003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9003/internal/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  storage-node-4:
+    <<: *storage-node
+    container_name: quorumvault-storage-node-4
+    environment:
+      NODE_ID: node-4
+      PORT: 9004
+      DATA_DIR: /data
+      DEMO_MODE: ${DEMO_MODE:-true}
+      QUORUMVAULT_INTERNAL_TOKEN: ${QUORUMVAULT_INTERNAL_TOKEN:-local-demo-internal-token-change-me}
+    volumes:
+      - node4-data:/data
+    ports:
+      - "9004:9004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9004/internal/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  control-plane:
+    container_name: quorumvault-control-plane
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://quorumvault:quorumvault@postgres:5432/quorumvault
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_NODE_URLS: http://storage-node-1:9001,http://storage-node-2:9002,http://storage-node-3:9003,http://storage-node-4:9004
+      QUORUMVAULT_INTERNAL_TOKEN: ${QUORUMVAULT_INTERNAL_TOKEN:-local-demo-internal-token-change-me}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      storage-node-1:
+        condition: service_healthy
+      storage-node-2:
+        condition: service_healthy
+      storage-node-3:
+        condition: service_healthy
+      storage-node-4:
+        condition: service_healthy
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  frontend:
+    container_name: quorumvault-frontend
+    build: ./frontend
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+
+volumes:
+  postgres-data:
+  redis-data:
+  node1-data:
+  node2-data:
+  node3-data:
+  node4-data:
+
+
+
+
