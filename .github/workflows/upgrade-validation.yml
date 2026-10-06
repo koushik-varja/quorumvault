@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      DATABASE_URL: sqlite+pysqlite:///:memory:
+      DATABASE_URL: 'sqlite+pysqlite:///:memory:'
       JWT_SECRET: ci-only-secret
     steps:
       - uses: actions/checkout@v4
