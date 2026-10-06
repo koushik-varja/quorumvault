@@ -255,3 +255,47 @@ It reports measured upload/download throughput, request latency, concurrent uplo
 - metadata high availability.
 
 For algorithm details and limitations, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Database relationships are documented in [`docs/DATABASE.md`](docs/DATABASE.md), and endpoint behavior in [`docs/API.md`](docs/API.md).
+
+
+## Measured failure-testing upgrade
+
+This repository includes a controlled local chaos/measurement layer. It does not claim recovery from failures that leave a requested chunk with no verified healthy replica.
+
+### Explicit data health
+
+QuorumVault derives four states from actual replica health and active repair state:
+
+- **HEALTHY** — configured healthy replica count is satisfied.
+- **DEGRADED** — at least one verified copy remains, but redundancy is below target.
+- **REPAIRING** — the object is recoverable and a repair is active.
+- **UNRECOVERABLE** — at least one required chunk has no verified healthy replica.
+
+Admin metrics are available from `GET /api/metrics`; per-user latest-object health is available from `GET /api/data-health`.
+
+### Controlled chaos harness
+
+With the local Compose cluster healthy:
+
+```powershell
+python scripts/chaos/chaos_harness.py --output-dir docs/generated
+```
+
+The harness exercises real storage containers for single-node failure, two-node failure, corruption, replica deletion, failure during upload, failure during restore/download, and repair-source failure. It writes `failure-matrix.json` and `failure-matrix.md` from observed results. Every recovery success verifies the reconstructed bytes and SHA-256.
+
+### Benchmark suite
+
+```powershell
+python scripts/benchmark/benchmark_suite.py --sizes-mib 1,4,8 --iterations 3 --output docs/generated/benchmark-smoke.json
+```
+
+Use larger iteration counts before publishing performance claims. p99 is deliberately omitted unless at least 100 observations exist. Consistent-hash join/remove percentages are algorithm-level membership experiments; automatic live topology expansion remains a limitation.
+
+### Failure and consistency documentation
+
+- [Repository audit](docs/REPOSITORY_AUDIT.md)
+- [Failure model](docs/FAILURE_MODEL.md)
+- [Consistency model](docs/CONSISTENCY_MODEL.md)
+- [Upgrade changelog](docs/UPGRADE_CHANGELOG.md)
+- [Résumé metrics template](docs/resume-metrics-template.md)
+
+The metadata database remains a single PostgreSQL authority, cross-system writes are not a distributed transaction, and arbitrary online membership/rebalancing is not automated.
