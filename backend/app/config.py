@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     heartbeat_interval_seconds: int = 5
     heartbeat_timeout_seconds: int = 15
     repair_interval_seconds: int = 8
+    repair_lease_seconds: int = 120
     integrity_interval_seconds: int = 0
     max_upload_bytes: int = 1024 * 1024 * 1024
     storage_node_urls: str = 'http://storage-node-1:9001,http://storage-node-2:9002,http://storage-node-3:9003,http://storage-node-4:9004'
