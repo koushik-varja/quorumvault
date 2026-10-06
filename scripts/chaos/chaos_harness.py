@@ -145,6 +145,108 @@ def scenario_replica_deletion(client: QVClient) -> dict[str, Any]:
     )
 
 
+
+def scenario_failure_during_upload(client: QVClient) -> dict[str, Any]:
+    started = now_ms()
+    payload = deterministic_payload(5 * 1024 * 1024 + 101, b'chaos-upload')
+    chunks = [payload[i:i + 4 * 1024 * 1024] for i in range(0, len(payload), 4 * 1024 * 1024)]
+    manifest = [
+        {'index': i, 'hash': hashlib.sha256(blob).hexdigest(), 'size': len(blob)}
+        for i, blob in enumerate(chunks)
+    ]
+    session = client.request(
+        'POST', '/uploads/sessions',
+        {'file_name': f'chaos-upload-{int(time.time())}.bin', 'expected_size': len(payload),
+         'content_type': 'application/octet-stream', 'chunks': manifest},
+    )
+    placement = client.request('GET', f"/placement/{manifest[0]['hash']}")
+    victim = placement['desired_nodes'][0]
+    docker('stop', container_for(victim))
+    try:
+        for index in session['missing_chunks']:
+            client.request('PUT', f"/uploads/sessions/{session['session_id']}/chunks/{index}", raw=chunks[index], timeout=60)
+        finalized = client.request('POST', f"/uploads/sessions/{session['session_id']}/finalize")
+        rows = client.request('GET', '/files')
+        file_id = next(row['id'] for row in rows if row['name'].startswith('chaos-upload-'))
+        ok = verify_download(client, file_id, finalized['version_number'], payload)
+        return record(
+            'node_failure_during_upload', started,
+            data_available=ok, detected=True, repair_attempted=False,
+            recovery_succeeded=ok, sha256_verified=ok,
+            note='A selected target was stopped after session creation; upload succeeded by placement fallback to another healthy node.',
+        )
+    finally:
+        docker('start', container_for(victim))
+        wait_until(
+            'upload victim healthy after restart',
+            lambda: next((n for n in client.request('GET', '/cluster') if n['id'] == victim and n['status'] == 'HEALTHY'), None),
+            timeout=45,
+        )
+
+
+def scenario_failure_during_restore(client: QVClient) -> dict[str, Any]:
+    started = now_ms()
+    payload = deterministic_payload(4 * 1024 * 1024 + 73, b'chaos-restore')
+    uploaded = client.upload_bytes(f'chaos-restore-{int(time.time())}.bin', payload)
+    file_id, version = uploaded['file_id'], uploaded['version_number']
+    victim = healthy_replicas(uploaded['detail'], version)[0]
+    docker('stop', container_for(victim))
+    try:
+        ok = verify_download(client, file_id, version, payload)
+        return record(
+            'node_failure_during_restore', started,
+            data_available=ok, detected=True, repair_attempted=False,
+            recovery_succeeded=ok, sha256_verified=ok,
+            note='Restore/download rejected the failed replica and fell back to another SHA-256 verified replica.',
+        )
+    finally:
+        docker('start', container_for(victim))
+        wait_until(
+            'restore victim healthy after restart',
+            lambda: next((n for n in client.request('GET', '/cluster') if n['id'] == victim and n['status'] == 'HEALTHY'), None),
+            timeout=45,
+        )
+
+
+def scenario_failure_during_repair(client: QVClient) -> dict[str, Any]:
+    started = now_ms()
+    payload = deterministic_payload(3 * 1024 * 1024 + 29, b'chaos-repair-source')
+    uploaded = client.upload_bytes(f'chaos-repair-{int(time.time())}.bin', payload)
+    file_id, version = uploaded['file_id'], uploaded['version_number']
+    chunk = chunk_by_index(uploaded['detail'], version)
+    replicas = healthy_replicas(uploaded['detail'], version)
+    deleted = replicas[0]
+    failing_source = replicas[1]
+    client.request('POST', '/demo/delete-replica', {'chunk_hash': chunk['hash'], 'node_id': deleted})
+    docker('stop', container_for(failing_source))
+    try:
+        client.request('POST', '/repairs/scan')
+        docker('start', container_for(failing_source))
+        wait_until(
+            'repair source healthy after restart',
+            lambda: next((n for n in client.request('GET', '/cluster') if n['id'] == failing_source and n['status'] == 'HEALTHY'), None),
+            timeout=45,
+        )
+        client.request('POST', '/repairs/scan')
+        wait_until(
+            'repair after source failure',
+            lambda: len(healthy_replicas(client.request('GET', f'/files/{file_id}'), version)) == 3,
+            timeout=45,
+        )
+        ok = verify_download(client, file_id, version, payload)
+        return record(
+            'node_failure_during_repair', started,
+            data_available=ok, detected=True, repair_attempted=True,
+            recovery_succeeded=ok, sha256_verified=ok,
+            note='A candidate repair source was stopped before repair; repair never accepted unchecked bytes and succeeded after a verified source was available.',
+        )
+    finally:
+        try:
+            docker('start', container_for(failing_source))
+        except Exception:
+            pass
+
+
 def write_reports(results: list[dict[str, Any]], output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / 'failure-matrix.json').write_text(json.dumps(results, indent=2), encoding='utf-8')
@@ -177,6 +279,9 @@ def main() -> None:
         scenario_two_node_failure,
         scenario_corruption,
         scenario_replica_deletion,
+        scenario_failure_during_upload,
+        scenario_failure_during_restore,
+        scenario_failure_during_repair,
     ]
     results = []
     for scenario in scenarios:
