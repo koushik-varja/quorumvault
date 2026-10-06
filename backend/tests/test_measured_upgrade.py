@@ -127,6 +127,7 @@ def test_project_metrics_reports_real_counts_without_fake_values():
         nodes = add_nodes(db)
         user = User(email='metrics@example.com', password_hash='x')
         db.add(user)
+        db.flush()
         logical = LogicalFile(owner_id=user.id, name='m.bin')
         chunk = Chunk(hash='a' * 64, size_bytes=10)
         db.add_all([logical, chunk])
