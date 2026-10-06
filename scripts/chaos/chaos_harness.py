@@ -30,10 +30,23 @@ def verify_download(client: QVClient, file_id: str, version: int, expected: byte
     return actual == expected and hashlib.sha256(actual).hexdigest() == hashlib.sha256(expected).hexdigest()
 
 
+
+def stable_upload(client: QVClient, name: str, payload: bytes) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return client.upload_bytes(f'{name}-{attempt}', payload)
+        except Exception as exc:
+            last_error = exc
+            time.sleep(3)
+    assert last_error is not None
+    raise last_error
+
+
 def scenario_single_node_failure(client: QVClient) -> dict[str, Any]:
     started = now_ms()
     payload = deterministic_payload(5 * 1024 * 1024 + 19, b'chaos-single')
-    uploaded = client.upload_bytes(f'chaos-single-{int(time.time())}.bin', payload)
+    uploaded = stable_upload(client, f'chaos-single-{int(time.time())}.bin', payload)
     file_id, version = uploaded['file_id'], uploaded['version_number']
     replicas = healthy_replicas(uploaded['detail'], version)
     victim = replicas[0]
@@ -75,7 +88,7 @@ def scenario_single_node_failure(client: QVClient) -> dict[str, Any]:
 def scenario_two_node_failure(client: QVClient) -> dict[str, Any]:
     started = now_ms()
     payload = deterministic_payload(3 * 1024 * 1024 + 31, b'chaos-two')
-    uploaded = client.upload_bytes(f'chaos-two-{int(time.time())}.bin', payload)
+    uploaded = stable_upload(client, f'chaos-two-{int(time.time())}.bin', payload)
     file_id, version = uploaded['file_id'], uploaded['version_number']
     victims = healthy_replicas(uploaded['detail'], version)[:2]
     for victim in victims:
@@ -96,12 +109,13 @@ def scenario_two_node_failure(client: QVClient) -> dict[str, Any]:
             lambda: all(n['status'] == 'HEALTHY' for n in client.request('GET', '/cluster')),
             timeout=50,
         )
+        time.sleep(3)
 
 
 def scenario_corruption(client: QVClient) -> dict[str, Any]:
     started = now_ms()
     payload = deterministic_payload(4 * 1024 * 1024 + 7, b'chaos-corrupt')
-    uploaded = client.upload_bytes(f'chaos-corrupt-{int(time.time())}.bin', payload)
+    uploaded = stable_upload(client, f'chaos-corrupt-{int(time.time())}.bin', payload)
     file_id, version = uploaded['file_id'], uploaded['version_number']
     chunk = chunk_by_index(uploaded['detail'], version)
     victim = healthy_replicas(uploaded['detail'], version)[0]
@@ -126,7 +140,7 @@ def scenario_corruption(client: QVClient) -> dict[str, Any]:
 def scenario_replica_deletion(client: QVClient) -> dict[str, Any]:
     started = now_ms()
     payload = deterministic_payload(2 * 1024 * 1024 + 11, b'chaos-delete')
-    uploaded = client.upload_bytes(f'chaos-delete-{int(time.time())}.bin', payload)
+    uploaded = stable_upload(client, f'chaos-delete-{int(time.time())}.bin', payload)
     file_id, version = uploaded['file_id'], uploaded['version_number']
     chunk = chunk_by_index(uploaded['detail'], version)
     victim = healthy_replicas(uploaded['detail'], version)[0]
@@ -187,7 +201,7 @@ def scenario_failure_during_upload(client: QVClient) -> dict[str, Any]:
 def scenario_failure_during_restore(client: QVClient) -> dict[str, Any]:
     started = now_ms()
     payload = deterministic_payload(4 * 1024 * 1024 + 73, b'chaos-restore')
-    uploaded = client.upload_bytes(f'chaos-restore-{int(time.time())}.bin', payload)
+    uploaded = stable_upload(client, f'chaos-restore-{int(time.time())}.bin', payload)
     file_id, version = uploaded['file_id'], uploaded['version_number']
     victim = healthy_replicas(uploaded['detail'], version)[0]
     docker('stop', container_for(victim))
@@ -211,7 +225,7 @@ def scenario_failure_during_restore(client: QVClient) -> dict[str, Any]:
 def scenario_failure_during_repair(client: QVClient) -> dict[str, Any]:
     started = now_ms()
     payload = deterministic_payload(3 * 1024 * 1024 + 29, b'chaos-repair-source')
-    uploaded = client.upload_bytes(f'chaos-repair-{int(time.time())}.bin', payload)
+    uploaded = stable_upload(client, f'chaos-repair-{int(time.time())}.bin', payload)
     file_id, version = uploaded['file_id'], uploaded['version_number']
     chunk = chunk_by_index(uploaded['detail'], version)
     replicas = healthy_replicas(uploaded['detail'], version)
