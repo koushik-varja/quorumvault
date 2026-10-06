@@ -1,0 +1,83 @@
+name: Upgrade Validation and Package
+
+on:
+  push:
+    branches: [upgrade/measured-failure-testing]
+  workflow_dispatch:
+
+jobs:
+  validate-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: sqlite+pysqlite:///:memory:
+      JWT_SECRET: ci-only-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install -r storage-node/requirements.txt
+      - name: Backend validation
+        working-directory: backend
+        run: |
+          ruff check --select E9,F63,F7,F82 app tests
+          pytest -q
+      - name: Storage-node validation
+        working-directory: storage-node
+        run: |
+          ruff check --select E9,F63,F7,F82 app tests
+          pytest -q
+      - name: Frontend validation
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Start stack
+        run: |
+          cp .env.example .env
+          docker compose up -d --build
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8000/api/health && break
+            sleep 3
+          done
+          curl -fsS http://localhost:8000/api/health
+      - name: Existing E2E tests
+        run: |
+          python scripts/integration/e2e_node_failure_repair.py
+          python scripts/integration/e2e_corruption_repair.py
+      - name: Chaos and benchmark smoke
+        run: |
+          python scripts/chaos/chaos_harness.py --output-dir docs/generated
+          python scripts/benchmark/benchmark_suite.py --sizes-mib 1,4,8 --iterations 3 --output docs/generated/benchmark-smoke.json
+      - name: Capture validation environment
+        run: |
+          mkdir -p docs/generated
+          echo "# Validation environment" > docs/generated/validation-environment.md
+          echo "Commit: $GITHUB_SHA" >> docs/generated/validation-environment.md
+          echo "Runner OS: $RUNNER_OS" >> docs/generated/validation-environment.md
+          docker --version >> docs/generated/validation-environment.md
+          docker compose version >> docs/generated/validation-environment.md
+          python --version >> docs/generated/validation-environment.md
+          node --version >> docs/generated/validation-environment.md
+          docker compose ps > docs/generated/docker-compose-ps.txt
+      - name: Stop stack
+        if: always()
+        run: docker compose down
+      - name: Create final ZIP
+        run: |
+          zip -r /tmp/QuorumVault-upgraded.zip . -x ".git/*" ".env" "frontend/node_modules/*" "frontend/dist/*" "frontend/*.tsbuildinfo" "**/__pycache__/*" "**/.pytest_cache/*" "**/.ruff_cache/*" "**/*.pyc" "*.log"
+      - name: Upload final ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuorumVault-upgraded
+          path: /tmp/QuorumVault-upgraded.zip
+          if-no-files-found: error
+          retention-days: 30
