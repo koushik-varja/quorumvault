@@ -69,3 +69,30 @@ GC rejects any chunk referenced by a retained file version or active upload. Sna
 ## Transactional boundary
 
 PostgreSQL is the metadata authority, but metadata writes and storage-node filesystem writes are not one distributed transaction. Content-addressed idempotent writes, checksum verification and repair make partial failures recoverable; a production evolution could add a durable write-intent/outbox state machine for stronger cross-system crash recovery.
+
+
+## Measured-failure data paths
+
+```mermaid
+flowchart TD
+  A[Upload] --> B[4 MiB chunking]
+  B --> C[SHA-256]
+  C --> D[Chunk-level dedup]
+  D --> E[Consistent hash ring]
+  E --> F[Replica placement RF=3]
+  F --> G1[Storage node 1]
+  F --> G2[Storage node 2]
+  F --> G3[Storage node 3]
+  F --> G4[Storage node 4]
+```
+
+```mermaid
+flowchart TD
+  H[Heartbeat] --> I[Failure detector]
+  I --> J[Replica audit]
+  J --> K[Serialized repair scheduling]
+  K --> L[Verified healthy source]
+  L --> M[Replacement replica]
+  M --> N[SHA-256 verification]
+  N --> O[HEALTHY]
+```
