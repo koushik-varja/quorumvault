@@ -91,8 +91,23 @@ export interface RepairInfo {
   created_at: string;
 }
 
+export interface DataHealthCounts {
+  HEALTHY: number;
+  DEGRADED: number;
+  REPAIRING: number;
+  UNRECOVERABLE: number;
+}
+
+export interface DataHealthSummary {
+  objects: DataHealthCounts;
+  chunks: DataHealthCounts;
+  object_count: number;
+  chunk_count: number;
+}
+
 export interface IntegrityState {
   replica_states: Record<string, number>;
+  data_health: DataHealthSummary;
   repairs: RepairInfo[];
 }
 
