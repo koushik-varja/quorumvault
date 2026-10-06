@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 from .api.routes import router
+from .api.upgrade_routes import router as upgrade_router
 from .auth import hash_password
 from .background import heartbeat_loop, integrity_loop, repair_loop
 from .config import settings
@@ -96,6 +97,7 @@ async def correlation_id(request: Request, call_next):
 
 
 app.include_router(router)
+app.include_router(upgrade_router)
 
 
 @app.get('/')
