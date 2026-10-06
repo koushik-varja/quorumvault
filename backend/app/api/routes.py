@@ -46,8 +46,10 @@ from ..services.cache import cache
 from ..services.downloads import iter_version_bytes
 from ..services.gc import collect_garbage
 from ..services.integrity import integrity_scan
+from ..services.health import aggregate_data_health, version_health
 from ..services.metrics import metrics
 from ..services.placement import ConsistentHashRing
+from ..services.project_metrics import project_metrics
 from ..services.repair import repair_scan
 from ..services.snapshots import create_snapshot, restore_snapshot
 from ..services.storage_client import StorageClient
@@ -226,6 +228,7 @@ def file_detail(file_id: str, db: Session = Depends(get_db), user: User = Depend
                 'size_bytes': version.size_bytes,
                 'file_sha256': version.file_sha256,
                 'created_at': version.created_at,
+                'health': version_health(db, version),
                 'chunks': chunks,
             }
         )
@@ -400,6 +403,16 @@ def cluster(db: Session = Depends(get_db), user: User = Depends(current_user)):
     return [serialize_node(n) for n in db.scalars(select(StorageNode).order_by(StorageNode.id)).all()]
 
 
+@router.get('/data-health')
+def data_health(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return aggregate_data_health(db, user.id)
+
+
+@router.get('/metrics')
+def metrics_state(db: Session = Depends(get_db), admin: User = Depends(admin_user)):
+    return project_metrics(db)
+
+
 @router.get('/integrity')
 def integrity_state(db: Session = Depends(get_db), admin: User = Depends(admin_user)):
     states = {
@@ -409,6 +422,7 @@ def integrity_state(db: Session = Depends(get_db), admin: User = Depends(admin_u
     jobs = db.scalars(select(RepairJob).order_by(RepairJob.created_at.desc()).limit(20)).all()
     return {
         'replica_states': states,
+        'data_health': aggregate_data_health(db),
         'repairs': [
             {
                 'id': job.id,
@@ -520,6 +534,34 @@ async def demo_corrupt(payload: DemoCorruptRequest, db: Session = Depends(get_db
     record(db, 'DEMO_REPLICA_CORRUPTED', f'Corrupted {payload.chunk_hash[:12]} on {payload.node_id}', admin.id)
     db.commit()
     return {'ok': True}
+
+
+@router.post('/demo/delete-replica')
+async def demo_delete_replica(
+    payload: DemoCorruptRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(admin_user),
+):
+    require_demo()
+    replica = db.scalar(
+        select(ChunkReplica).where(
+            ChunkReplica.chunk_hash == payload.chunk_hash,
+            ChunkReplica.node_id == payload.node_id,
+        )
+    )
+    node = db.get(StorageNode, payload.node_id)
+    if not replica or not node:
+        raise HTTPException(404, 'Replica not found')
+    await StorageClient().delete(node.base_url, payload.chunk_hash)
+    replica.state = ReplicaState.UNAVAILABLE
+    record(
+        db,
+        'DEMO_REPLICA_DELETED',
+        f'Deleted {payload.chunk_hash[:12]} from {payload.node_id}',
+        admin.id,
+    )
+    db.commit()
+    return {'ok': True, 'chunk_hash': payload.chunk_hash, 'node_id': payload.node_id}
 
 
 @router.post('/demo/generate-duplicate')
