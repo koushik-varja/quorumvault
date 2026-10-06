@@ -31,7 +31,10 @@ jobs:
           pytest -q
       - name: Storage-node validation
         working-directory: storage-node
+        env:
+          DATA_DIR: /tmp/quorumvault-storage-test
         run: |
+          mkdir -p /tmp/quorumvault-storage-test
           ruff check --select E9,F63,F7,F82 app tests
           pytest -q
       - name: Frontend validation
