@@ -11,7 +11,7 @@ jobs:
       run:
         working-directory: backend
     env:
-      DATABASE_URL: sqlite+pysqlite:///:memory:
+      DATABASE_URL: 'sqlite+pysqlite:///:memory:'
       JWT_SECRET: ci-only-secret
     steps:
       - uses: actions/checkout@v4
